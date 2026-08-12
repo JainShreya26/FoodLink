@@ -1,0 +1,205 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model FoodBank {
+  id        String          @id @default(cuid())
+  name      String          @unique
+  address   String? // "7900 Edgewater Dr, Oakland, CA"
+  latitude  Float           @default(0)
+  longitude Float           @default(0)
+  items     InventoryItem[]
+  flags     Flag[]
+  shipments Shipment[]
+  parLevels ParLevel[]
+}
+
+model InventoryItem {
+  id         String    @id @default(cuid())
+  foodBankId String
+  foodBank   FoodBank  @relation(fields: [foodBankId], references: [id])
+  name       String // "Canned corn"
+  category   String // Protein | Grain | Vegetable | Fruit | Dairy | Other
+  quantity   Float
+  unit       String // lbs | cases | cans | boxes | each
+  expiryDate DateTime?
+  source     String? // "Safeway donation"
+  createdAt  DateTime  @default(now())
+
+  /// Removals are soft so the history below always has something to point at.
+  deletedAt DateTime?
+
+  events InventoryEvent[]
+
+  @@index([foodBankId, deletedAt])
+}
+
+/// Append-only. Every change to stock writes one of these and nothing ever
+/// updates or deletes them, so "what happened to those 200 lbs" is answerable.
+model InventoryEvent {
+  id         String        @id @default(cuid())
+  itemId     String
+  item       InventoryItem @relation(fields: [itemId], references: [id])
+  foodBankId String
+  itemName   String // snapshot: survives renames
+  action     String // CREATED | UPDATED | DELETED | RESTORED | TRANSFER_IN | TRANSFER_OUT | TRANSFER_REVERSED
+
+  quantityBefore Float?
+  quantityAfter  Float?
+  changes        String? // JSON: { field: { from, to } }
+  note           String?
+
+  actorBankId String
+  requestId   String? // set when the change came from a network transfer
+  createdAt   DateTime @default(now())
+
+  @@index([itemId, createdAt])
+  @@index([foodBankId, createdAt])
+}
+
+/// A delivery that is expected but has not landed yet. This is what turns
+/// "what we have" into "what we will have".
+model Shipment {
+  id         String   @id @default(cuid())
+  foodBankId String
+  foodBank   FoodBank @relation(fields: [foodBankId], references: [id])
+
+  direction  String // INBOUND | OUTBOUND
+  sourceType String // DONOR | USDA | RESCUE | PURCHASE | TRANSFER
+  sourceName String? // "Safeway Broadway", "USDA TEFAP"
+
+  scheduledFor DateTime
+  windowEnd    DateTime?
+  status       String    @default("SCHEDULED") // SCHEDULED | CONFIRMED | DELAYED | ARRIVED | RECEIVED | CANCELLED
+
+  driverName  String?
+  driverPhone String?
+  etaMinutes  Int? // last reported delay, from a driver check-in
+  note        String?
+
+  /// Explicit opt-in captured when the delivery is booked. No automated message
+  /// goes to this number without it — see lib/notify.ts.
+  driverConsent Boolean @default(false)
+
+  lines     ShipmentLine[]
+  checkIns  CheckIn[]
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @default(now()) @updatedAt
+
+  @@index([foodBankId, scheduledFor])
+}
+
+/// One "are you still coming?" exchange with a driver.
+///
+/// The token is a bearer capability: whoever holds the link can answer, which is
+/// the point — a driver should not need an account to say "running 20 late".
+/// It is long, single-shipment, and expires, so the blast radius is one delivery.
+model CheckIn {
+  id         String   @id @default(cuid())
+  shipmentId String
+  shipment   Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  token   String @unique
+  channel String // SMS | VOICE | MANUAL
+
+  requestedAt DateTime  @default(now())
+  expiresAt   DateTime
+  respondedAt DateTime?
+
+  outcome    String? // ON_TIME | DELAYED | NOT_COMING | UNREACHABLE
+  etaMinutes Int?
+  note       String?
+
+  /// What the provider did with the outbound message, for the audit trail.
+  deliveryStatus String  @default("PENDING") // PENDING | LOGGED | SENT | FAILED | SKIPPED
+  deliveryDetail String?
+
+  createdAt DateTime @default(now())
+
+  @@index([shipmentId, requestedAt])
+}
+
+model ShipmentLine {
+  id         String    @id @default(cuid())
+  shipmentId String
+  shipment   Shipment  @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  name       String
+  category   String
+  quantity   Float
+  unit       String
+  expiryDate DateTime?
+}
+
+/// The minimum a bank wants on hand. Without it "projected shortage" has no
+/// meaning — everything above zero looks fine.
+model ParLevel {
+  id          String   @id @default(cuid())
+  foodBankId  String
+  foodBank    FoodBank @relation(fields: [foodBankId], references: [id])
+  name        String
+  unit        String
+  minQuantity Float
+
+  @@unique([foodBankId, name, unit])
+}
+
+model Flag {
+  id          String    @id @default(cuid())
+  foodBankId  String
+  foodBank    FoodBank  @relation(fields: [foodBankId], references: [id])
+  type        String // SURPLUS | SHORTAGE
+  itemName    String // free-typed by the user
+  quantity    Float
+  unit        String
+  contactName String
+  contactInfo String // phone or email
+  note        String?
+  status      String    @default("OPEN") // OPEN | CLOSED
+  createdAt   DateTime  @default(now())
+  requests    Request[]
+}
+
+model Request {
+  id              String @id @default(cuid())
+  flagId          String
+  flag            Flag   @relation(fields: [flagId], references: [id])
+  requesterBankId String
+  status          String @default("OPEN") // OPEN | COMPLETED | CANCELLED
+
+  /// Negotiated before completion; finalQuantity is what actually moved.
+  agreedQuantity Float?
+  finalQuantity  Float?
+  cancelReason   String?
+
+  messages  Message[]
+  events    RequestEvent[]
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @default(now()) @updatedAt
+}
+
+/// Audit trail for the negotiation itself, rendered as a timeline in the thread.
+model RequestEvent {
+  id          String   @id @default(cuid())
+  requestId   String
+  request     Request  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  actorBankId String
+  action      String // CREATED | QUANTITY_PROPOSED | COMPLETED | CANCELLED | REOPENED | REVERSED
+  detail      String?
+  createdAt   DateTime @default(now())
+
+  @@index([requestId, createdAt])
+}
+
+model Message {
+  id           String   @id @default(cuid())
+  requestId    String
+  request      Request  @relation(fields: [requestId], references: [id])
+  senderBankId String
+  text         String
+  createdAt    DateTime @default(now())
+}
