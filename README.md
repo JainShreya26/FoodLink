@@ -9,7 +9,6 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://typescriptlang.org)
 [![Prisma](https://img.shields.io/badge/Prisma-6-2D3748?logo=prisma&logoColor=white)](https://prisma.io)
 [![Claude](https://img.shields.io/badge/Claude-Opus%205-D97757?logo=anthropic&logoColor=white)](https://claude.com)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 </div>
 
@@ -124,7 +123,3 @@ The seed is additive and keyed on natural identifiers, so running it against an 
 ## Status
 
 Built for the AISCO hackathon. The check-in ladder's second rung — an automated voice call — is deliberately unbuilt; `CheckIn.channel` already carries `VOICE` so it can slot in. The Twilio send path is written but has never run against real credentials, and says so in the code.
-
-## License
-
-[MIT](LICENSE)
