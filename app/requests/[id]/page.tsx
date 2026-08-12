@@ -94,6 +94,8 @@ export default async function RequestPage({
         initialStatus={req.status}
         finalQuantity={req.finalQuantity}
         agreedQuantity={req.agreedQuantity}
+        scheduledFor={req.scheduledFor?.toISOString() ?? null}
+        handoverNote={req.handoverNote}
         maxQuantity={req.flag.quantity}
         unit={req.flag.unit}
         itemName={req.flag.itemName}

@@ -31,7 +31,57 @@ export async function PATCH(
     );
   }
 
-  const body = (await request.json()) as { agreedQuantity?: number | null };
+  const body = (await request.json()) as {
+    agreedQuantity?: number | null;
+    scheduledFor?: string | null;
+    handoverNote?: string | null;
+  };
+
+  // Booking the handover: the "when" half of the commitment.
+  if (body.scheduledFor !== undefined) {
+    const when = body.scheduledFor ? new Date(body.scheduledFor) : null;
+    if (body.scheduledFor && Number.isNaN(when!.getTime())) {
+      return Response.json({ error: "That date didn't parse." }, { status: 400 });
+    }
+    const note = body.handoverNote?.trim() || null;
+
+    await prisma.$transaction(async (tx) => {
+      await tx.request.update({
+        where: { id },
+        data: { scheduledFor: when, handoverNote: note },
+      });
+      const actor = await tx.foodBank.findUnique({ where: { id: g.bankId } });
+      const stamp = when
+        ? when.toLocaleString("en-US", {
+            weekday: "short",
+            month: "short",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+          })
+        : null;
+      await tx.requestEvent.create({
+        data: {
+          requestId: id,
+          actorBankId: g.bankId,
+          action: "SCHEDULED",
+          detail: stamp ? `${stamp}${note ? ` — ${note}` : ""}` : "Pickup unbooked",
+        },
+      });
+      await tx.message.create({
+        data: {
+          requestId: id,
+          senderBankId: g.bankId,
+          text: stamp
+            ? `🚚 ${actor?.name ?? "A food bank"} booked the handover for ${stamp}.${note ? ` ${note}` : ""}`
+            : `🚚 ${actor?.name ?? "A food bank"} removed the handover booking.`,
+        },
+      });
+    });
+
+    return Response.json({ ok: true, scheduledFor: when?.toISOString() ?? null });
+  }
+
   if (body.agreedQuantity === undefined) {
     return Response.json({ error: "Nothing to change." }, { status: 400 });
   }
