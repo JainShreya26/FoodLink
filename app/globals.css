@@ -9,3 +9,12 @@
 body {
   font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
 }
+
+/* For strips that scroll sideways on small screens — the nav links — where a
+   permanent scrollbar track is louder than the overflow it reports. */
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}

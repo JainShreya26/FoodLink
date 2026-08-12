@@ -27,13 +27,18 @@ export default function AddInventory() {
   const [busy, setBusy] = useState<"extract" | "save" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [items, setItems] = useState<DraftItem[] | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
 
   const reset = () => {
     setText("");
     setItems(null);
     setError(null);
+    setFileName(null);
     if (fileRef.current) fileRef.current.value = "";
   };
+
+  /** Nothing to extract from means the round trip can only fail — don't offer it. */
+  const nothingToExtract = !text.trim() && !fileName;
 
   const extract = async () => {
     setBusy("extract");
@@ -124,6 +129,7 @@ export default function AddInventory() {
             value={text}
             onChange={(e) => setText(e.target.value)}
             rows={5}
+            aria-label="Donation email, note or delivery details"
             placeholder={EXAMPLE}
             className="mt-3 w-full rounded-lg border border-stone-300 bg-white p-3 text-sm"
           />
@@ -131,12 +137,19 @@ export default function AddInventory() {
             <input
               ref={fileRef}
               type="file"
+              aria-label="Attach a text, CSV or image file"
+              onChange={(e) => setFileName(e.target.files?.[0]?.name ?? null)}
               accept=".txt,.csv,.md,image/png,image/jpeg,image/webp,image/gif"
               className="text-sm text-stone-600 file:mr-2 file:rounded-lg file:border-0 file:bg-stone-200 file:px-3 file:py-1.5 file:text-sm hover:file:bg-stone-300"
             />
             <button
               onClick={extract}
-              disabled={busy !== null}
+              disabled={busy !== null || nothingToExtract}
+              title={
+                nothingToExtract
+                  ? "Paste some text or attach a file first"
+                  : "Send this to the AI to structure"
+              }
               className="ml-auto rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-600 disabled:opacity-50"
             >
               {busy === "extract" ? "Extracting…" : "✨ Extract with AI"}
@@ -175,6 +188,7 @@ export default function AddInventory() {
                     <td className="px-2 py-1.5">
                       <input
                         value={it.name}
+                        aria-label={`Item name, row ${i + 1}`}
                         onChange={(e) => update(i, { name: e.target.value })}
                         className="w-full rounded border border-stone-200 px-2 py-1"
                       />
@@ -182,6 +196,7 @@ export default function AddInventory() {
                     <td className="px-2 py-1.5">
                       <select
                         value={it.category}
+                        aria-label={`Category, row ${i + 1}`}
                         onChange={(e) => update(i, { category: e.target.value })}
                         className="rounded border border-stone-200 px-2 py-1"
                       >
@@ -194,6 +209,7 @@ export default function AddInventory() {
                       <input
                         type="number"
                         value={it.quantity}
+                        aria-label={`Quantity, row ${i + 1}`}
                         onChange={(e) =>
                           update(i, { quantity: Number(e.target.value) })
                         }
@@ -203,6 +219,7 @@ export default function AddInventory() {
                     <td className="px-2 py-1.5">
                       <input
                         value={it.unit}
+                        aria-label={`Unit, row ${i + 1}`}
                         onChange={(e) => update(i, { unit: e.target.value })}
                         className="w-20 rounded border border-stone-200 px-2 py-1"
                       />
@@ -211,6 +228,7 @@ export default function AddInventory() {
                       <input
                         type="date"
                         value={it.expiryDate ?? ""}
+                        aria-label={`Expiry date, row ${i + 1}`}
                         onChange={(e) =>
                           update(i, { expiryDate: e.target.value || null })
                         }
@@ -220,6 +238,7 @@ export default function AddInventory() {
                     <td className="px-2 py-1.5">
                       <input
                         value={it.source ?? ""}
+                        aria-label={`Source, row ${i + 1}`}
                         onChange={(e) =>
                           update(i, { source: e.target.value || null })
                         }
@@ -229,10 +248,11 @@ export default function AddInventory() {
                     <td className="px-2 py-1.5 text-center">
                       <button
                         onClick={() => remove(i)}
+                        aria-label={`Drop ${it.name || `row ${i + 1}`}`}
                         title="Remove row"
                         className="text-stone-400 hover:text-red-600"
                       >
-                        ✕
+                        <span aria-hidden="true">✕</span>
                       </button>
                     </td>
                   </tr>

@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useState } from "react";
+import { useDialog } from "@/components/Dialog";
 import DeliveryForm, { type Shipment } from "./DeliveryForm";
 import { OUTCOME_LABELS, type Outcome } from "@/lib/checkin";
 import { SOURCE_LABELS, STATUSES, STATUS_LABELS, type ShipmentStatus } from "@/lib/shipments";
@@ -34,6 +35,7 @@ type Row = {
   projected: number;
   parLevel: number | null;
   status: "SHORT" | "WATCH" | "OK";
+  expired: number;
   expiringSoon: number;
   nextArrival: string | null;
   movements: {
@@ -79,6 +81,7 @@ const fmtDateTime = (iso: string) =>
   });
 
 export default function ProjectionClient({ bankName }: { bankName: string }) {
+  const dialog = useDialog();
   const [days, setDays] = useState(14);
   const [rows, setRows] = useState<Row[] | null>(null);
   const [shipments, setShipments] = useState<Shipment[] | null>(null);
@@ -86,6 +89,7 @@ export default function ProjectionClient({ bankName }: { bankName: string }) {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Shipment | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [showCancelled, setShowCancelled] = useState(false);
   const [parDraft, setParDraft] = useState<Record<string, string>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
   const [checkIns, setCheckIns] = useState<Record<string, CheckIn[]>>({});
@@ -158,15 +162,24 @@ export default function ProjectionClient({ bankName }: { bankName: string }) {
   };
 
   const setStatus = async (shipment: Shipment, status: ShipmentStatus) => {
-    if (
-      status === "RECEIVED" &&
-      !confirm(
-        `Receive this delivery into inventory?\n\n${shipment.lines
-          .map((l) => `${l.quantity} ${l.unit} ${l.name}`)
-          .join("\n")}`,
-      )
-    ) {
-      return;
+    if (status === "RECEIVED") {
+      const ok = await dialog.confirm({
+        title: "Receive this delivery into inventory?",
+        body: (
+          <>
+            These lines are counted onto the shelf now:
+            <ul className="mt-1.5 list-disc pl-5">
+              {shipment.lines.map((l, i) => (
+                <li key={i}>
+                  {l.quantity} {l.unit} {l.name}
+                </li>
+              ))}
+            </ul>
+          </>
+        ),
+        confirmLabel: "Receive",
+      });
+      if (!ok) return;
     }
     setBusyId(shipment.id);
     setError(null);
@@ -211,7 +224,19 @@ export default function ProjectionClient({ bankName }: { bankName: string }) {
   };
 
   const remove = async (shipment: Shipment) => {
-    if (!confirm("Delete this scheduled delivery?")) return;
+    const ok = await dialog.confirm({
+      title: "Delete this scheduled delivery?",
+      body: (
+        <>
+          {shipment.sourceName ?? "This delivery"} on{" "}
+          {fmtDateTime(shipment.scheduledFor)} stops counting toward the
+          projection. To keep the record instead, set its status to Cancelled.
+        </>
+      ),
+      confirmLabel: "Delete",
+      tone: "danger",
+    });
+    if (!ok) return;
     setBusyId(shipment.id);
     try {
       const res = await fetch(`/api/shipments/${shipment.id}`, { method: "DELETE" });
@@ -226,7 +251,12 @@ export default function ProjectionClient({ bankName }: { bankName: string }) {
   };
 
   const shortCount = rows?.filter((r) => r.status === "SHORT").length ?? 0;
-  const upcoming = shipments?.filter((s) => s.status !== "RECEIVED") ?? [];
+  // Cancelled deliveries are not scheduled and carry no check-in, so they get
+  // their own muted section rather than sitting in the live list with an
+  // "Ask driver" button that can never do anything.
+  const upcoming =
+    shipments?.filter((s) => s.status !== "RECEIVED" && s.status !== "CANCELLED") ?? [];
+  const cancelled = shipments?.filter((s) => s.status === "CANCELLED") ?? [];
 
   return (
     <div>
@@ -297,49 +327,17 @@ export default function ProjectionClient({ bankName }: { bankName: string }) {
         </h2>
         <div className="mt-2 space-y-2">
           {upcoming.map((s) => (
-            <div
+            <DeliveryCard
               key={s.id}
-              className="rounded-xl border border-stone-200 bg-white p-3"
+              shipment={s}
+              busy={busyId === s.id}
+              onStatus={(status) => setStatus(s, status)}
+              onEdit={() => {
+                setShowForm(false);
+                setEditing(s);
+              }}
+              onDelete={() => remove(s)}
             >
-              <div className="flex flex-wrap items-center gap-2">
-                <span
-                  className={`rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase ${
-                    s.direction === "INBOUND"
-                      ? "bg-emerald-700 text-white"
-                      : "bg-amber-600 text-white"
-                  }`}
-                >
-                  {s.direction === "INBOUND" ? "In" : "Out"}
-                </span>
-                <span className="font-medium">
-                  {s.sourceName ?? SOURCE_LABELS[s.sourceType as keyof typeof SOURCE_LABELS]}
-                </span>
-                <span className="text-sm text-stone-500">
-                  {fmtDateTime(s.scheduledFor)}
-                </span>
-                <span
-                  className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                    SHIPMENT_STATUS_STYLES[s.status] ?? "bg-stone-100"
-                  }`}
-                >
-                  {STATUS_LABELS[s.status as ShipmentStatus] ?? s.status}
-                  {s.status === "DELAYED" && s.etaMinutes ? ` · +${s.etaMinutes}m` : ""}
-                </span>
-              </div>
-
-              <p className="mt-1 text-sm text-stone-600">
-                {s.lines.map((l) => `${l.quantity} ${l.unit} ${l.name}`).join(" · ")}
-              </p>
-              {s.driverName && (
-                <p className="text-xs text-stone-400">
-                  Driver: {s.driverName}
-                  {s.driverPhone ? ` · ${s.driverPhone}` : ""}
-                  {s.driverPhone && !s.driverConsent && (
-                    <span className="ml-1 text-amber-600">· no text consent</span>
-                  )}
-                </p>
-              )}
-
               <CheckInPanel
                 shipment={s}
                 checkIns={checkIns[s.id] ?? []}
@@ -348,38 +346,7 @@ export default function ProjectionClient({ bankName }: { bankName: string }) {
                 link={lastLink?.id === s.id ? lastLink : null}
                 now={loadedAt}
               />
-
-              <div className="mt-2 flex flex-wrap items-center gap-1">
-                <select
-                  value={s.status}
-                  onChange={(e) => setStatus(s, e.target.value as ShipmentStatus)}
-                  disabled={busyId === s.id}
-                  className="rounded-lg border border-stone-300 px-2 py-1 text-xs"
-                >
-                  {STATUSES.map((st) => (
-                    <option key={st} value={st}>
-                      {STATUS_LABELS[st]}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  onClick={() => {
-                    setShowForm(false);
-                    setEditing(s);
-                  }}
-                  className="rounded px-2 py-1 text-xs text-stone-500 hover:bg-stone-100 hover:text-emerald-700"
-                >
-                  ✎ Edit
-                </button>
-                <button
-                  onClick={() => remove(s)}
-                  disabled={busyId === s.id}
-                  className="rounded px-2 py-1 text-xs text-stone-400 hover:bg-red-50 hover:text-red-600"
-                >
-                  ✕ Delete
-                </button>
-              </div>
-            </div>
+            </DeliveryCard>
           ))}
           {shipments && upcoming.length === 0 && (
             <div className="rounded-xl border border-dashed border-stone-300 p-6 text-center text-sm text-stone-400">
@@ -388,6 +355,38 @@ export default function ProjectionClient({ bankName }: { bankName: string }) {
             </div>
           )}
         </div>
+
+        {cancelled.length > 0 && (
+          <div className="mt-3">
+            <button
+              onClick={() => setShowCancelled((v) => !v)}
+              aria-expanded={showCancelled}
+              className="text-xs font-medium text-stone-500 hover:text-stone-700"
+            >
+              {showCancelled ? "▾" : "▸"} {cancelled.length} cancelled deliver
+              {cancelled.length === 1 ? "y" : "ies"} — not counted in the
+              projection
+            </button>
+            {showCancelled && (
+              <div className="mt-2 space-y-2">
+                {cancelled.map((s) => (
+                  <DeliveryCard
+                    key={s.id}
+                    shipment={s}
+                    busy={busyId === s.id}
+                    muted
+                    onStatus={(status) => setStatus(s, status)}
+                    onEdit={() => {
+                      setShowForm(false);
+                      setEditing(s);
+                    }}
+                    onDelete={() => remove(s)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Projection table */}
@@ -420,8 +419,13 @@ export default function ProjectionClient({ bankName }: { bankName: string }) {
                     <td className="px-4 py-2">
                       <span className="font-medium">{row.name}</span>{" "}
                       <span className="text-xs text-stone-400">{row.unit}</span>
+                      {row.expired > 0 && (
+                        <span className="ml-2 inline-block rounded bg-red-100 px-1.5 py-0.5 text-[10px] whitespace-nowrap text-red-700">
+                          {row.expired} expired
+                        </span>
+                      )}
                       {row.expiringSoon > 0 && (
-                        <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">
+                        <span className="ml-2 inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[10px] whitespace-nowrap text-amber-700">
                           {row.expiringSoon} expiring
                         </span>
                       )}
@@ -445,6 +449,7 @@ export default function ProjectionClient({ bankName }: { bankName: string }) {
                         min="0"
                         step="any"
                         placeholder="—"
+                        aria-label={`Par level for ${row.name} in ${row.unit}`}
                         value={parDraft[row.key] ?? row.parLevel ?? ""}
                         onChange={(e) =>
                           setParDraft((p) => ({ ...p, [row.key]: e.target.value }))
@@ -459,7 +464,7 @@ export default function ProjectionClient({ bankName }: { bankName: string }) {
                     </td>
                     <td className="px-4 py-2">
                       <span
-                        className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                        className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${
                           STATUS_STYLES[row.status]
                         }`}
                       >
@@ -536,8 +541,110 @@ export default function ProjectionClient({ bankName }: { bankName: string }) {
         <p className="mt-2 text-xs text-stone-400">
           Projected = on hand + inbound − outbound within the window. Set a par
           level to say what &ldquo;short&rdquo; means for an item; without one,
-          only items running to zero are flagged.
+          only items running to zero are flagged. Red{" "}
+          <span className="text-red-700">expired</span> counts stock already past
+          its date — pull it before you count on it.
         </p>
+      </div>
+    </div>
+  );
+}
+
+/** One booked movement. `children` is the check-in panel, omitted when cancelled. */
+function DeliveryCard({
+  shipment: s,
+  busy,
+  muted = false,
+  onStatus,
+  onEdit,
+  onDelete,
+  children,
+}: {
+  shipment: Shipment;
+  busy: boolean;
+  muted?: boolean;
+  onStatus: (status: ShipmentStatus) => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div
+      className={`rounded-xl border border-stone-200 p-3 ${
+        muted ? "bg-stone-50" : "bg-white"
+      }`}
+    >
+      <div className={`flex flex-wrap items-center gap-2 ${muted ? "opacity-70" : ""}`}>
+        <span
+          className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase whitespace-nowrap ${
+            s.direction === "INBOUND"
+              ? "bg-emerald-700 text-white"
+              : "bg-amber-600 text-white"
+          }`}
+        >
+          {s.direction === "INBOUND" ? "In" : "Out"}
+        </span>
+        <span className="font-medium">
+          {s.sourceName ?? SOURCE_LABELS[s.sourceType as keyof typeof SOURCE_LABELS]}
+        </span>
+        <span className="text-sm text-stone-500">{fmtDateTime(s.scheduledFor)}</span>
+        <span
+          className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${
+            SHIPMENT_STATUS_STYLES[s.status] ?? "bg-stone-100"
+          }`}
+        >
+          {STATUS_LABELS[s.status as ShipmentStatus] ?? s.status}
+          {s.status === "DELAYED" && s.etaMinutes ? ` · +${s.etaMinutes}m` : ""}
+        </span>
+      </div>
+
+      <p className={`mt-1 text-sm text-stone-600 ${muted ? "opacity-70" : ""}`}>
+        {s.lines.map((l) => `${l.quantity} ${l.unit} ${l.name}`).join(" · ")}
+      </p>
+      {s.driverName && (
+        <p className="text-xs text-stone-400">
+          Driver: {s.driverName}
+          {s.driverPhone ? ` · ${s.driverPhone}` : ""}
+          {s.driverPhone && !s.driverConsent && (
+            <span className="ml-1 text-amber-600">· no text consent</span>
+          )}
+        </p>
+      )}
+      {s.note && <p className="mt-1 text-xs text-stone-500">{s.note}</p>}
+
+      {children}
+
+      <div className="mt-2 flex flex-wrap items-center gap-1">
+        <label className="sr-only" htmlFor={`status-${s.id}`}>
+          Delivery status
+        </label>
+        <select
+          id={`status-${s.id}`}
+          value={s.status}
+          onChange={(e) => onStatus(e.target.value as ShipmentStatus)}
+          disabled={busy}
+          className="rounded-lg border border-stone-300 px-2 py-1 text-xs disabled:opacity-50"
+        >
+          {STATUSES.map((st) => (
+            <option key={st} value={st}>
+              {STATUS_LABELS[st]}
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={onEdit}
+          disabled={busy}
+          className="rounded px-2 py-1 text-xs text-stone-500 hover:bg-stone-100 hover:text-emerald-700 disabled:opacity-40"
+        >
+          ✎ Edit
+        </button>
+        <button
+          onClick={onDelete}
+          disabled={busy}
+          className="rounded px-2 py-1 text-xs text-stone-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+        >
+          ✕ Delete
+        </button>
       </div>
     </div>
   );

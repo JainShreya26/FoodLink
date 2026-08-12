@@ -49,7 +49,7 @@ export default async function RequestPage({
       >
         <div className="flex flex-wrap items-center gap-2">
           <span
-            className={`rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase ${
+            className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase whitespace-nowrap ${
               surplus ? "bg-emerald-700 text-white" : "bg-amber-600 text-white"
             }`}
           >
@@ -57,7 +57,9 @@ export default async function RequestPage({
           </span>
           <h1 className="text-xl font-bold">{req.flag.itemName}</h1>
           <span className="text-sm text-stone-600">
-            {req.flag.quantity} {req.flag.unit}
+            {req.flag.quantity > 0
+              ? `${req.flag.quantity} ${req.flag.unit} still on the flag`
+              : "fully allocated"}
           </span>
         </div>
         <p className="mt-1 text-sm text-stone-600">
