@@ -27,14 +27,12 @@ export default async function Home() {
         <h1 className="text-3xl font-bold">{bank.name}</h1>
       </div>
 
-      <div className="mt-6 flex items-center justify-between">
-        <h2 className="text-xl font-semibold">
-          Inventory{" "}
-          <span className="text-sm font-normal text-stone-500">
-            · {items.length} items
-          </span>
-        </h2>
-      </div>
+      <h2 className="mt-6 text-xl font-semibold">
+        Inventory{" "}
+        <span className="text-sm font-normal text-stone-500">
+          · {items.length} item{items.length === 1 ? "" : "s"}
+        </span>
+      </h2>
 
       <AddInventory />
 

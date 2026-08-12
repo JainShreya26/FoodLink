@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useDialog } from "@/components/Dialog";
 import { DELAY_CHOICES } from "@/lib/checkin";
 
 type Delivery = {
@@ -36,6 +37,7 @@ const BUTTON =
   "w-full rounded-2xl px-6 py-5 text-lg font-semibold transition active:scale-[0.99]";
 
 export default function CheckInClient({ token }: { token: string }) {
+  const dialog = useDialog();
   const [state, setState] = useState<State | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -82,10 +84,22 @@ export default function CheckInClient({ token }: { token: string }) {
     }
   };
 
+  // A driver landing here has no account and no other way back into the app, so
+  // a bare sentence on a white page is a dead end. Say what this was and what
+  // to do instead.
   if (error && !state) {
     return (
       <Shell>
-        <p className="text-center text-stone-600">{error}</p>
+        <div className="rounded-2xl border border-stone-200 bg-white p-6 text-center">
+          <p className="text-3xl">🥫</p>
+          <h1 className="mt-2 text-xl font-bold">This check-in link is closed</h1>
+          <p className="mt-2 text-sm text-stone-600">{error}</p>
+          <p className="mt-4 text-sm text-stone-600">
+            Check-in links last 24 hours and can only be used once. If you still
+            need to reach the warehouse about a delivery, call the number on your
+            run sheet.
+          </p>
+        </div>
       </Shell>
     );
   }
@@ -119,7 +133,8 @@ export default function CheckInClient({ token }: { token: string }) {
 
       {state.expired && !done && (
         <p className="mt-6 rounded-xl bg-amber-50 p-4 text-center text-sm text-amber-800">
-          This link has expired. Please call the food bank directly.
+          This link has expired — it was only good for 24 hours. Please call{" "}
+          {d.foodBankName} directly on the number from your run sheet.
         </p>
       )}
 
@@ -132,6 +147,10 @@ export default function CheckInClient({ token }: { token: string }) {
               `Thanks — we've told the warehouse you're about ${done.eta} minutes behind.`}
             {done.outcome === "NOT_COMING" &&
               "Thanks for letting us know. We've cancelled this one."}
+            {/* Fallback so a status set from the dispatcher's side (UNREACHABLE)
+                never renders a tick with nothing next to it. */}
+            {!["ON_TIME", "DELAYED", "NOT_COMING"].includes(done.outcome) &&
+              "Thanks — your answer is already recorded."}
           </p>
           <p className="mt-1 text-sm text-emerald-700">
             You can close this page.
@@ -157,10 +176,15 @@ export default function CheckInClient({ token }: { token: string }) {
                   🕐 Running late
                 </button>
                 <button
-                  onClick={() => {
-                    if (confirm("Tell the food bank you can't make this delivery?")) {
-                      answer("NOT_COMING");
-                    }
+                  onClick={async () => {
+                    const ok = await dialog.confirm({
+                      title: "Tell them you can't make this delivery?",
+                      body: `${d.foodBankName} will see this straight away and the booking is cancelled.`,
+                      confirmLabel: "Yes, I can't make it",
+                      cancelLabel: "Go back",
+                      tone: "danger",
+                    });
+                    if (ok) answer("NOT_COMING");
                   }}
                   disabled={busy}
                   className={`${BUTTON} border-2 border-stone-300 bg-white text-stone-600 hover:bg-stone-50 disabled:opacity-50`}

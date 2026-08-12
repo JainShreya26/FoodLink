@@ -60,22 +60,33 @@ export default function BoardClient({ bankName }: { bankName: string }) {
     load();
   }, [load]);
 
-  /** Everything the filters allow — this is what the map plots. */
-  const matching = useMemo(() => {
+  /**
+   * Everything except the radius. Kept separate so the distance hint below can
+   * count only the flags the radius is actually responsible for hiding —
+   * counting against the raw list blamed distance for a type or search miss.
+   */
+  const withinFilters = useMemo(() => {
     if (!flags) return [];
     const q = search.trim().toLowerCase();
     return flags
       .filter((f) => (typeFilter === "ALL" ? true : f.type === typeFilter))
-      .filter((f) => f.distanceMiles <= radius)
       .filter((f) => (includeMine ? true : !f.isMine))
       .filter((f) =>
         q
           ? f.itemName.toLowerCase().includes(q) ||
             f.bankName.toLowerCase().includes(q)
           : true,
-      )
-      .sort((a, b) => a.distanceMiles - b.distanceMiles);
-  }, [flags, typeFilter, radius, includeMine, search]);
+      );
+  }, [flags, typeFilter, includeMine, search]);
+
+  /** Everything the filters allow — this is what the map plots. */
+  const matching = useMemo(
+    () =>
+      withinFilters
+        .filter((f) => f.distanceMiles <= radius)
+        .sort((a, b) => a.distanceMiles - b.distanceMiles),
+    [withinFilters, radius],
+  );
 
   // A bank that drops out of the filtered set stops counting as selected,
   // derived rather than reset in an effect so the two can't disagree.
@@ -90,7 +101,12 @@ export default function BoardClient({ bankName }: { bankName: string }) {
     [matching, activeBankId],
   );
 
-  const outsideRadius = (flags?.length ?? 0) - (flags ?? []).filter((f) => f.distanceMiles <= radius).length;
+  const outsideRadius = withinFilters.length - matching.length;
+  const nearestOutside = Math.min(
+    ...withinFilters
+      .filter((f) => f.distanceMiles > radius)
+      .map((f) => f.distanceMiles),
+  );
 
   const respond = async (flag: Flag) => {
     if (flag.myRequestId) {
@@ -178,6 +194,7 @@ export default function BoardClient({ bankName }: { bankName: string }) {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            aria-label="Search item or food bank"
             placeholder="Search item or food bank…"
             className="min-w-[200px] flex-1 rounded-lg border border-stone-300 px-3 py-1.5 text-sm"
           />
@@ -224,8 +241,21 @@ export default function BoardClient({ bankName }: { bankName: string }) {
           </div>
         </div>
         {outsideRadius > 0 && (
-          <p className="mt-3 text-xs text-stone-400">
-            {outsideRadius} flag{outsideRadius === 1 ? "" : "s"} hidden beyond {radius} miles.
+          <p className="mt-3 text-xs text-stone-500">
+            {outsideRadius} matching flag{outsideRadius === 1 ? "" : "s"} sit
+            {outsideRadius === 1 ? "s" : ""} beyond {radius} miles — the nearest
+            is {nearestOutside} mi away.{" "}
+            <button
+              onClick={() =>
+                setRadius(
+                  RADIUS_OPTIONS.find((r) => r >= nearestOutside) ??
+                    RADIUS_OPTIONS[RADIUS_OPTIONS.length - 1],
+                )
+              }
+              className="font-medium text-emerald-700 underline decoration-dotted underline-offset-2 hover:text-emerald-900"
+            >
+              Widen the search
+            </button>
           </p>
         )}
       </div>
@@ -262,7 +292,7 @@ export default function BoardClient({ bankName }: { bankName: string }) {
             >
               <div className="flex items-start justify-between gap-2">
                 <span
-                  className={`rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${
+                  className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold tracking-wide uppercase whitespace-nowrap ${
                     surplus
                       ? "bg-emerald-700 text-white"
                       : "bg-amber-600 text-white"

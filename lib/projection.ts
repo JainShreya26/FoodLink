@@ -27,6 +27,9 @@ export type ProjectionRow = {
   projected: number;
   parLevel: number | null;
   status: ProjectionStatus;
+  /** Past its date already — dead stock, not a warning. */
+  expired: number;
+  /** Still good, but inside the 14-day window. */
   expiringSoon: number;
   nextArrival: string | null;
   movements: {
@@ -80,6 +83,7 @@ export async function projectInventory(bankId: string, horizonDays: number) {
         projected: 0,
         parLevel: null,
         status: "OK",
+        expired: 0,
         expiringSoon: 0,
         nextArrival: null,
         movements: [],
@@ -92,7 +96,10 @@ export async function projectInventory(bankId: string, horizonDays: number) {
   for (const item of items) {
     const row = ensure(item.name, item.unit, item.category);
     row.onHand += item.quantity;
-    if (item.expiryDate && item.expiryDate <= expirySoonCutoff) {
+    // Already past its date is a different problem from about to go: the first
+    // needs pulling off the shelf, the second needs moving. Don't merge them.
+    if (item.expiryDate && item.expiryDate < now) row.expired += item.quantity;
+    else if (item.expiryDate && item.expiryDate <= expirySoonCutoff) {
       row.expiringSoon += item.quantity;
     }
   }
@@ -141,13 +148,19 @@ export async function projectInventory(bankId: string, horizonDays: number) {
  * is short, shrinking or largely expiring is worth watching.
  */
 function classify(row: ProjectionRow): ProjectionStatus {
+  // Stock past its date cannot be handed out, so it never counts toward
+  // "do we have enough" — but inbound deliveries can still cover the gap.
+  const usableProjected = row.projected - row.expired;
+
   if (row.parLevel !== null) {
-    if (row.projected < row.parLevel) return "SHORT";
-    if (row.projected < row.parLevel * 1.25) return "WATCH";
-    return "OK";
+    if (usableProjected < row.parLevel) return "SHORT";
+    if (usableProjected < row.parLevel * 1.25) return "WATCH";
+    return row.expired > 0 ? "WATCH" : "OK";
   }
-  if (row.projected <= 0) return "SHORT";
-  const usable = row.onHand - row.expiringSoon;
-  if (row.projected < row.onHand || usable <= 0) return "WATCH";
+  if (usableProjected <= 0) return "SHORT";
+  const usable = usableProjected - row.expiringSoon;
+  // Expired stock on the shelf is always worth a look, even when the numbers
+  // are otherwise healthy — somebody has to go and pull it.
+  if (row.projected < row.onHand || usable <= 0 || row.expired > 0) return "WATCH";
   return "OK";
 }

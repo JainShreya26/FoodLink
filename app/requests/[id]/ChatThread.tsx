@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useDialog } from "@/components/Dialog";
 
 type Message = {
   id: string;
@@ -52,12 +53,14 @@ export default function ChatThread({
   itemName: string;
 }) {
   const router = useRouter();
+  const dialog = useDialog();
   const [messages, setMessages] = useState<Message[]>([]);
   const [events, setEvents] = useState<RequestEvent[]>([]);
   const [status, setStatus] = useState(initialStatus);
   const [finalQty, setFinalQty] = useState<number | null>(finalQuantity);
   const [agreedQty, setAgreedQty] = useState<number | null>(agreedQuantity);
   const [available, setAvailable] = useState<number>(maxQuantity);
+  const [flagStatus, setFlagStatus] = useState<string>("OPEN");
   const [cancelReason, setCancelReason] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [qty, setQty] = useState(String(agreedQuantity ?? maxQuantity));
@@ -65,6 +68,7 @@ export default function ChatThread({
   const [busy, setBusy] = useState(false);
   const [showLog, setShowLog] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const lastAgreedRef = useRef<number | null>(agreedQuantity);
 
   const load = useCallback(async () => {
     try {
@@ -77,7 +81,18 @@ export default function ChatThread({
       setFinalQty(data.finalQuantity);
       setAgreedQty(data.agreedQuantity);
       setAvailable(data.availableQuantity ?? maxQuantity);
+      setFlagStatus(data.flagStatus ?? "OPEN");
       setCancelReason(data.cancelReason ?? null);
+      // Adopt a *newly* proposed number so the field isn't stranded on whatever
+      // this tab loaded with — but only on a change, or the 3s poll would fight
+      // whatever the user is typing.
+      if (
+        data.agreedQuantity != null &&
+        data.agreedQuantity !== lastAgreedRef.current
+      ) {
+        setQty(String(data.agreedQuantity));
+      }
+      lastAgreedRef.current = data.agreedQuantity ?? null;
     } catch {
       // transient network hiccup — the next poll will catch up
     }
@@ -140,47 +155,88 @@ export default function ChatThread({
     }
   };
 
-  const propose = () => {
+  /** Shared by Propose and Mark Complete — neither can act on a bad number. */
+  const readQty = (): number | null => {
     const value = Number(qty);
     if (!Number.isFinite(value) || value <= 0) {
       setError("Enter a quantity greater than 0.");
-      return;
+      return null;
     }
+    if (value > available) {
+      setError(`Only ${available} ${unit} are still on this flag.`);
+      return null;
+    }
+    return value;
+  };
+
+  const propose = () => {
+    const value = readQty();
+    if (value === null) return;
     act("", { agreedQuantity: value }, "PATCH");
   };
 
-  const complete = () => {
-    const value = Number(qty);
-    if (!confirm(`Mark complete and transfer ${value} ${unit} of ${itemName}?`)) return;
-    act("/complete", { quantity: value });
+  const complete = async () => {
+    const value = readQty();
+    if (value === null) return;
+    const ok = await dialog.confirm({
+      title: "Mark this request complete?",
+      body: (
+        <>
+          {value} {unit} of {itemName} moves now, and both food banks&apos;
+          inventory is updated. It can be reversed afterwards.
+        </>
+      ),
+      confirmLabel: `Transfer ${value} ${unit}`,
+    });
+    if (ok) act("/complete", { quantity: value });
   };
 
-  const cancel = () => {
-    const reason = prompt("Cancel this request. Why? (optional)", "");
+  const cancel = async () => {
+    const reason = await dialog.prompt({
+      title: "Cancel this request?",
+      body: "The other food bank sees the reason in the thread. You can reopen it later.",
+      label: "Why? (optional)",
+      placeholder: "Already covered, too far to drive…",
+      confirmLabel: "Cancel request",
+      cancelLabel: "Keep it open",
+      tone: "danger",
+    });
     if (reason === null) return;
     act("/cancel", { reason });
   };
 
   const reopen = () => act("/reopen", {});
 
-  const reverse = () => {
-    const reason = prompt(
-      `Reverse this transfer? ${finalQty} ${unit} of ${itemName} goes back to the sender and the request returns to open.\n\nWhy? (optional)`,
-      "",
-    );
+  const reverse = async () => {
+    const reason = await dialog.prompt({
+      title: "Reverse this transfer?",
+      body: (
+        <>
+          {finalQty} {unit} of {itemName} goes back to the sender and the request
+          returns to open.
+        </>
+      ),
+      label: "Why? (optional)",
+      placeholder: "Wrong pallet, short count on arrival…",
+      confirmLabel: "Reverse transfer",
+      tone: "danger",
+    });
     if (reason === null) return;
     act("/reverse", { reason });
   };
 
   const done = status === "COMPLETED";
   const cancelled = status === "CANCELLED";
+  // An open request against a flag that has been fully allocated has nothing
+  // left to move — offering a 0-max quantity box is a dead end.
+  const exhausted = available <= 0 || flagStatus === "CLOSED";
   const open = status === "OPEN";
 
   return (
     <div className="mt-4">
       <div className="flex items-center gap-2">
         <span
-          className={`rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase ${
+          className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase whitespace-nowrap ${
             STATUS_STYLES[status] ?? "bg-stone-100 text-stone-600"
           }`}
         >
@@ -198,6 +254,7 @@ export default function ChatThread({
           {showLog ? "Hide" : "Show"} activity log ({events.length})
         </button>
       </div>
+
 
       {showLog && (
         <ol className="mt-2 space-y-1 rounded-xl border border-stone-200 bg-stone-50 p-3">
@@ -269,8 +326,9 @@ export default function ChatThread({
           <input
             value={text}
             onChange={(e) => setText(e.target.value)}
+            aria-label="Message"
             placeholder="Type a message…"
-            className="flex-1 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm"
+            className="min-w-0 flex-1 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm"
           />
           <button
             type="submit"
@@ -284,36 +342,52 @@ export default function ChatThread({
 
       {open && (
         <div className="mt-3 rounded-xl border border-stone-200 bg-white p-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm text-stone-600">Quantity:</span>
-            <input
-              type="number"
-              min="0"
-              max={available}
-              step="any"
-              value={qty}
-              onChange={(e) => setQty(e.target.value)}
-              className="w-24 rounded-lg border border-stone-300 px-2 py-1 text-sm"
-            />
-            <span className="text-sm text-stone-500">
-              {unit} <span className="text-xs text-stone-400">of {available} available</span>
-            </span>
-            <button
-              onClick={propose}
-              disabled={busy}
-              title="Put a number on the table without committing"
-              className="rounded-lg border border-emerald-700 px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
-            >
-              Propose
-            </button>
-            <button
-              onClick={complete}
-              disabled={busy}
-              className="ml-auto rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-600 disabled:opacity-50"
-            >
-              {busy ? "Working…" : "✓ Mark Complete"}
-            </button>
-          </div>
+          {exhausted ? (
+            <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              This flag is fully allocated — all of the {itemName} has been
+              transferred on other requests. Nothing is left to move here, so
+              close this conversation out or ask them to post a fresh flag.
+            </p>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <label htmlFor="transfer-qty" className="text-sm text-stone-600">
+                Quantity:
+              </label>
+              <input
+                id="transfer-qty"
+                type="number"
+                min="0"
+                max={available}
+                step="any"
+                value={qty}
+                onChange={(e) => setQty(e.target.value)}
+                className="w-24 rounded-lg border border-stone-300 px-2 py-1 text-sm"
+              />
+              <span className="text-sm text-stone-500">
+                {unit}{" "}
+                <span className="text-xs text-stone-400">
+                  of {available} available
+                </span>
+              </span>
+              <button
+                onClick={propose}
+                disabled={busy}
+                title="Put a number on the table without committing"
+                className="rounded-lg border border-emerald-700 px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+              >
+                Propose
+              </button>
+              <button
+                onClick={complete}
+                disabled={busy}
+                className="ml-auto rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-600 disabled:opacity-50"
+              >
+                {busy ? "Working…" : "✓ Mark Complete"}
+              </button>
+            </div>
+          )}
+
+
           <div className="mt-2 border-t border-stone-100 pt-2">
             <button
               onClick={cancel}

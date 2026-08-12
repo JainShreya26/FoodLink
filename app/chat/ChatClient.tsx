@@ -73,8 +73,11 @@ export default function ChatClient({ bankName }: { bankName: string }) {
     }
   };
 
+  // min-h-0 lets the transcript shrink instead of pushing the composer off the
+  // bottom of the screen — which is what the old 100vh calc did once the header
+  // wrapped to two rows on a phone.
   return (
-    <div className="mx-auto flex h-[calc(100vh-8rem)] max-w-3xl flex-col">
+    <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col">
       <div>
         <h1 className="text-2xl font-bold">Chat with your inventory</h1>
         <p className="text-sm text-stone-500">
@@ -161,8 +164,9 @@ export default function ChatClient({ bankName }: { bankName: string }) {
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            aria-label="Ask about your inventory"
             placeholder="Ask about your inventory…"
-            className="flex-1 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm"
+            className="min-w-0 flex-1 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm"
           />
           <button
             type="submit"

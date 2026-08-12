@@ -2,6 +2,7 @@
 
 import { Fragment, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useDialog } from "@/components/Dialog";
 
 type Item = {
   id: string;
@@ -30,6 +31,9 @@ function toDateInput(iso: string | null): string | null {
   return iso.slice(0, 10);
 }
 
+/** inline-block + nowrap: an inline badge that wraps splits its own pill in two. */
+const BADGE = "inline-block rounded px-2 py-0.5 whitespace-nowrap";
+
 function ExpiryBadge({ iso }: { iso: string | null }) {
   if (!iso) return <span className="text-stone-400">—</span>;
   const date = new Date(iso);
@@ -41,14 +45,14 @@ function ExpiryBadge({ iso }: { iso: string | null }) {
   });
   if (daysLeft < 0)
     return (
-      <span className="rounded bg-red-100 px-2 py-0.5 text-red-700">
+      <span className={`${BADGE} bg-red-100 text-red-700`}>
         {dateStr} · expired
       </span>
     );
   if (daysLeft <= 14)
     return (
-      <span className="rounded bg-amber-100 px-2 py-0.5 text-amber-700">
-        {dateStr} · {daysLeft}d left
+      <span className={`${BADGE} bg-amber-100 text-amber-700`}>
+        {dateStr} · {daysLeft === 0 ? "today" : `${daysLeft}d left`}
       </span>
     );
   return <span className="text-stone-600">{dateStr}</span>;
@@ -116,6 +120,7 @@ export default function InventoryTable({
   removedCount?: number;
 }) {
   const router = useRouter();
+  const dialog = useDialog();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);
@@ -216,10 +221,19 @@ export default function InventoryTable({
   };
 
   const remove = async (item: Item) => {
-    const note = prompt(
-      `Remove "${item.name}" from inventory?\n\nWhy? (spoiled, distributed, miscount…) — kept in the item's history.`,
-      "",
-    );
+    const note = await dialog.prompt({
+      title: `Remove ${item.name} from inventory?`,
+      body: (
+        <>
+          {item.quantity} {item.unit} comes off the shelf. Nothing is deleted —
+          the item stays under &ldquo;removed items&rdquo; with its full history.
+        </>
+      ),
+      label: "Why is it going?",
+      placeholder: "spoiled, distributed, miscount…",
+      confirmLabel: "Remove",
+      tone: "danger",
+    });
     if (note === null) return; // cancelled
     setBusy(true);
     setError(null);
@@ -245,7 +259,17 @@ export default function InventoryTable({
     <div className="mt-6">
       {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
       <div className="overflow-x-auto rounded-xl border border-stone-200 bg-white">
-        <table className="w-full text-sm">
+        <table className="w-full min-w-[860px] table-fixed text-sm">
+          {/* Fixed widths: without them the edit row's inputs resize every
+              column and the whole table jumps sideways on entering edit mode. */}
+          <colgroup>
+            <col className="w-[20%]" />
+            <col className="w-[11%]" />
+            <col className="w-[13%]" />
+            <col className="w-[19%]" />
+            <col className="w-[19%]" />
+            <col className="w-[18%]" />
+          </colgroup>
           <thead className="bg-stone-100 text-left text-stone-600">
             <tr>
               <th className="px-4 py-2 font-medium">Item</th>
@@ -263,6 +287,7 @@ export default function InventoryTable({
                   <td className="px-2 py-1.5">
                     <input
                       value={draft.name}
+                      aria-label="Item name"
                       onChange={(e) => setDraft({ ...draft, name: e.target.value })}
                       className="w-full rounded border border-stone-300 px-2 py-1"
                     />
@@ -270,8 +295,9 @@ export default function InventoryTable({
                   <td className="px-2 py-1.5">
                     <select
                       value={draft.category}
+                      aria-label="Category"
                       onChange={(e) => setDraft({ ...draft, category: e.target.value })}
-                      className="rounded border border-stone-300 px-2 py-1"
+                      className="w-full rounded border border-stone-300 px-2 py-1"
                     >
                       {CATEGORIES.map((c) => (
                         <option key={c}>{c}</option>
@@ -283,15 +309,17 @@ export default function InventoryTable({
                       <input
                         type="number"
                         value={draft.quantity}
+                        aria-label="Quantity"
                         onChange={(e) =>
                           setDraft({ ...draft, quantity: Number(e.target.value) })
                         }
-                        className="w-20 rounded border border-stone-300 px-2 py-1"
+                        className="w-full min-w-0 rounded border border-stone-300 px-2 py-1"
                       />
                       <input
                         value={draft.unit}
+                        aria-label="Unit"
                         onChange={(e) => setDraft({ ...draft, unit: e.target.value })}
-                        className="w-20 rounded border border-stone-300 px-2 py-1"
+                        className="w-full min-w-0 rounded border border-stone-300 px-2 py-1"
                       />
                     </div>
                   </td>
@@ -299,15 +327,17 @@ export default function InventoryTable({
                     <input
                       type="date"
                       value={draft.expiryDate ?? ""}
+                      aria-label="Expiry date"
                       onChange={(e) =>
                         setDraft({ ...draft, expiryDate: e.target.value || null })
                       }
-                      className="rounded border border-stone-300 px-2 py-1"
+                      className="w-full rounded border border-stone-300 px-2 py-1"
                     />
                   </td>
                   <td className="px-2 py-1.5">
                     <input
                       value={draft.source ?? ""}
+                      aria-label="Source"
                       onChange={(e) =>
                         setDraft({ ...draft, source: e.target.value || null })
                       }
@@ -336,7 +366,7 @@ export default function InventoryTable({
                 <tr className="border-t border-stone-100">
                   <td className="px-4 py-2 font-medium">{item.name}</td>
                   <td className="px-4 py-2">
-                    <span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs">
+                    <span className="inline-block rounded-full bg-stone-100 px-2 py-0.5 text-xs whitespace-nowrap">
                       {item.category}
                     </span>
                   </td>
@@ -351,8 +381,9 @@ export default function InventoryTable({
                     <button
                       onClick={() => openHistory(item)}
                       disabled={busy}
-                      title="History"
-                      className={`rounded px-2 py-1 text-xs hover:bg-stone-100 ${
+                      aria-expanded={historyId === item.id}
+                      title={`History for ${item.name}`}
+                      className={`rounded px-2 py-1 text-xs hover:bg-stone-100 disabled:opacity-40 disabled:hover:bg-transparent ${
                         historyId === item.id
                           ? "text-emerald-700"
                           : "text-stone-500 hover:text-emerald-700"
@@ -363,18 +394,19 @@ export default function InventoryTable({
                     <button
                       onClick={() => startEdit(item)}
                       disabled={busy}
-                      title="Edit"
-                      className="rounded px-2 py-1 text-xs text-stone-500 hover:bg-stone-100 hover:text-emerald-700"
+                      title={`Edit ${item.name}`}
+                      className="rounded px-2 py-1 text-xs text-stone-500 hover:bg-stone-100 hover:text-emerald-700 disabled:opacity-40 disabled:hover:bg-transparent"
                     >
                       ✎ Edit
                     </button>
                     <button
                       onClick={() => remove(item)}
                       disabled={busy}
-                      title="Remove"
-                      className="rounded px-2 py-1 text-xs text-stone-400 hover:bg-red-50 hover:text-red-600"
+                      aria-label={`Remove ${item.name}`}
+                      title={`Remove ${item.name}`}
+                      className="rounded px-2 py-1 text-xs text-stone-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40 disabled:hover:bg-transparent"
                     >
-                      ✕
+                      <span aria-hidden="true">✕</span>
                     </button>
                   </td>
                 </tr>
@@ -445,25 +477,63 @@ export default function InventoryTable({
 
           {showRemoved && (
             <div className="mt-2 overflow-x-auto rounded-xl border border-dashed border-stone-300 bg-stone-50">
-              <table className="w-full text-sm">
+              {/* Same column grid as the table above, so this reads as a
+                  separate section rather than a misaligned continuation. */}
+              <table className="w-full min-w-[860px] table-fixed text-sm">
+                <colgroup>
+                  <col className="w-[20%]" />
+                  <col className="w-[11%]" />
+                  <col className="w-[13%]" />
+                  <col className="w-[19%]" />
+                  <col className="w-[19%]" />
+                  <col className="w-[18%]" />
+                </colgroup>
+                <thead className="text-left text-xs text-stone-500">
+                  <tr className="border-b border-stone-200">
+                    <th className="px-4 py-2 font-medium">Item</th>
+                    <th className="px-4 py-2 font-medium">Category</th>
+                    <th className="px-4 py-2 font-medium">Quantity</th>
+                    <th className="px-4 py-2 font-medium">Expiry</th>
+                    <th className="px-4 py-2 font-medium">Source</th>
+                    <th className="px-4 py-2 font-medium text-right">Actions</th>
+                  </tr>
+                </thead>
                 <tbody>
                   {removed === null ? (
                     <tr>
-                      <td className="px-4 py-3 text-xs text-stone-400">Loading…</td>
+                      <td colSpan={6} className="px-4 py-3 text-xs text-stone-400">
+                        Loading…
+                      </td>
                     </tr>
                   ) : (
                     removed.map((item) => (
-                      <tr key={item.id} className="border-t border-stone-200 first:border-t-0">
-                        <td className="px-4 py-2 text-stone-500 line-through">{item.name}</td>
+                      <tr key={item.id} className="border-t border-stone-200">
+                        <td className="px-4 py-2 text-stone-500 line-through">
+                          {item.name}
+                        </td>
+                        <td className="px-4 py-2">
+                          <span className="inline-block rounded-full bg-stone-200/70 px-2 py-0.5 text-xs whitespace-nowrap text-stone-500">
+                            {item.category}
+                          </span>
+                        </td>
                         <td className="px-4 py-2 text-stone-400">
                           {item.quantity} {item.unit}
+                        </td>
+                        <td className="px-4 py-2 text-stone-400">
+                          {item.expiryDate
+                            ? new Date(item.expiryDate).toLocaleDateString("en-US", {
+                                month: "short",
+                                day: "numeric",
+                                year: "numeric",
+                              })
+                            : "—"}
                         </td>
                         <td className="px-4 py-2 text-stone-400">{item.source ?? "—"}</td>
                         <td className="px-4 py-2 text-right">
                           <button
                             onClick={() => restore(item.id)}
                             disabled={busy}
-                            className="rounded px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+                            className="rounded px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-40"
                           >
                             ↩ Restore
                           </button>
@@ -472,8 +542,8 @@ export default function InventoryTable({
                     ))
                   )}
                   {removed?.length === 0 && (
-                    <tr>
-                      <td className="px-4 py-3 text-xs text-stone-400">
+                    <tr className="border-t border-stone-200">
+                      <td colSpan={6} className="px-4 py-3 text-xs text-stone-400">
                         Nothing removed.
                       </td>
                     </tr>
