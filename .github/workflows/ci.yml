@@ -23,4 +23,5 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          ANTHROPIC_API_KEY: sk-ant-placeholder-for-build
+          # The build only needs the variable to exist; no request is made.
+          ANTHROPIC_API_KEY: build-time-placeholder-not-a-key
