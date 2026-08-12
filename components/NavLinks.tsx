@@ -4,11 +4,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const LINKS = [
-  { href: "/", label: "Inventory" },
-  { href: "/projection", label: "Projection" },
-  { href: "/chat", label: "Chat" },
-  { href: "/board", label: "Board" },
-  { href: "/requests", label: "Requests" },
+  { href: "/", label: "Inventory", also: [] },
+  { href: "/projection", label: "Projection", also: [] },
+  { href: "/chat", label: "Chat", also: [] },
+  // /postings is the board seen from your own side, so it lights the same lamp.
+  { href: "/board", label: "Board", also: ["/postings"] },
+  { href: "/requests", label: "Requests", also: [] },
 ] as const;
 
 /**
@@ -21,9 +22,12 @@ export default function NavLinks() {
   return (
     <nav className="no-scrollbar order-last -mx-1 w-full overflow-x-auto sm:order-none sm:mx-0 sm:w-auto sm:overflow-visible">
       <div className="flex items-center gap-1 px-1 sm:gap-2 sm:px-0">
-        {LINKS.map(({ href, label }) => {
+        {LINKS.map(({ href, label, also }) => {
           const active =
-            href === "/" ? pathname === "/" : pathname.startsWith(href);
+            href === "/"
+              ? pathname === "/"
+              : pathname.startsWith(href) ||
+                also.some((p) => pathname.startsWith(p));
           return (
             <Link
               key={href}

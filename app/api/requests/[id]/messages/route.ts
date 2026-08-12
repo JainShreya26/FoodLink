@@ -36,6 +36,8 @@ export async function GET(
     status: g.req.status,
     finalQuantity: g.req.finalQuantity,
     agreedQuantity: g.req.agreedQuantity,
+    scheduledFor: g.req.scheduledFor?.toISOString() ?? null,
+    handoverNote: g.req.handoverNote,
     cancelReason: g.req.cancelReason,
     availableQuantity: g.req.flag.quantity,
     flagStatus: g.req.flag.status,

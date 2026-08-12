@@ -176,6 +176,12 @@ model Request {
   finalQuantity  Float?
   cancelReason   String?
 
+  /// When the handover is booked for. The quantity answers "how much", this
+  /// answers "when" — together they are what turns a chat into a commitment.
+  scheduledFor DateTime?
+  /// Free text on the handover: "Ray collects, dock 4".
+  handoverNote String?
+
   messages  Message[]
   events    RequestEvent[]
   createdAt DateTime       @default(now())
@@ -188,7 +194,7 @@ model RequestEvent {
   requestId   String
   request     Request  @relation(fields: [requestId], references: [id], onDelete: Cascade)
   actorBankId String
-  action      String // CREATED | QUANTITY_PROPOSED | COMPLETED | CANCELLED | REOPENED | REVERSED
+  action      String // CREATED | QUANTITY_PROPOSED | SCHEDULED | COMPLETED | CANCELLED | REOPENED | REVERSED
   detail      String?
   createdAt   DateTime @default(now())
 

@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useDialog } from "@/components/Dialog";
+import { StageProgress } from "@/components/RequestStage";
+import { requestStage } from "@/lib/requests";
 
 type Message = {
   id: string;
@@ -23,10 +25,21 @@ type RequestEvent = {
 const EVENT_LABELS: Record<string, string> = {
   CREATED: "Request opened",
   QUANTITY_PROPOSED: "Quantity proposed",
+  SCHEDULED: "Handover booked",
   COMPLETED: "Transfer completed",
   CANCELLED: "Request cancelled",
   REOPENED: "Request reopened",
   REVERSED: "Transfer reversed",
+};
+
+/** datetime-local wants "YYYY-MM-DDTHH:mm" in local time. */
+const toLocalInput = (iso: string | null) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+    d.getHours(),
+  )}:${pad(d.getMinutes())}`;
 };
 
 const STATUS_STYLES: Record<string, string> = {
@@ -40,6 +53,8 @@ export default function ChatThread({
   initialStatus,
   finalQuantity,
   agreedQuantity,
+  scheduledFor,
+  handoverNote,
   maxQuantity,
   unit,
   itemName,
@@ -48,6 +63,8 @@ export default function ChatThread({
   initialStatus: string;
   finalQuantity: number | null;
   agreedQuantity: number | null;
+  scheduledFor: string | null;
+  handoverNote: string | null;
   maxQuantity: number;
   unit: string;
   itemName: string;
@@ -64,11 +81,15 @@ export default function ChatThread({
   const [cancelReason, setCancelReason] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [qty, setQty] = useState(String(agreedQuantity ?? maxQuantity));
+  const [when, setWhen] = useState(toLocalInput(scheduledFor));
+  const [bookedFor, setBookedFor] = useState<string | null>(scheduledFor);
+  const [note, setNote] = useState(handoverNote ?? "");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [showLog, setShowLog] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastAgreedRef = useRef<number | null>(agreedQuantity);
+  const lastScheduledRef = useRef<string | null>(scheduledFor);
 
   const load = useCallback(async () => {
     try {
@@ -93,6 +114,15 @@ export default function ChatThread({
         setQty(String(data.agreedQuantity));
       }
       lastAgreedRef.current = data.agreedQuantity ?? null;
+
+      // Same rule for the booking: adopt the other side's date when it changes,
+      // otherwise leave whatever is being typed alone.
+      setBookedFor(data.scheduledFor ?? null);
+      if (data.scheduledFor !== lastScheduledRef.current) {
+        setWhen(toLocalInput(data.scheduledFor ?? null));
+        setNote(data.handoverNote ?? "");
+      }
+      lastScheduledRef.current = data.scheduledFor ?? null;
     } catch {
       // transient network hiccup — the next poll will catch up
     }
@@ -175,6 +205,23 @@ export default function ChatThread({
     act("", { agreedQuantity: value }, "PATCH");
   };
 
+  const book = () => {
+    if (!when) {
+      setError("Pick a date and time for the handover.");
+      return;
+    }
+    act(
+      "",
+      {
+        scheduledFor: new Date(when).toISOString(),
+        handoverNote: note.trim() || null,
+      },
+      "PATCH",
+    );
+  };
+
+  const unbook = () => act("", { scheduledFor: null, handoverNote: null }, "PATCH");
+
   const complete = async () => {
     const value = readQty();
     if (value === null) return;
@@ -231,6 +278,11 @@ export default function ChatThread({
   // left to move — offering a 0-max quantity box is a dead end.
   const exhausted = available <= 0 || flagStatus === "CLOSED";
   const open = status === "OPEN";
+  const stage = requestStage({
+    status,
+    agreedQuantity: agreedQty,
+    scheduledFor: bookedFor,
+  });
 
   return (
     <div className="mt-4">
@@ -255,6 +307,26 @@ export default function ChatThread({
         </button>
       </div>
 
+      {/* Talking → agreed → booked → delivered, at a glance. */}
+      <div className="mt-2 rounded-xl border border-stone-200 bg-white px-3 py-2.5">
+        <StageProgress stage={stage} />
+        <p className="mt-1.5 text-xs text-stone-500">
+          {agreedQty !== null || finalQty !== null
+            ? `${finalQty ?? agreedQty} ${unit}`
+            : "Quantity not agreed"}
+          {" · "}
+          {bookedFor
+            ? new Date(bookedFor).toLocaleString("en-US", {
+                weekday: "short",
+                month: "short",
+                day: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+              })
+            : "no pickup booked"}
+          {note ? ` · ${note}` : ""}
+        </p>
+      </div>
 
       {showLog && (
         <ol className="mt-2 space-y-1 rounded-xl border border-stone-200 bg-stone-50 p-3">
@@ -387,6 +459,59 @@ export default function ChatThread({
             </div>
           )}
 
+          {/* "How much" is only half a commitment — this is the "when". */}
+          {!exhausted && (
+            <div className="mt-3 border-t border-stone-100 pt-3">
+              <div className="flex flex-wrap items-end gap-2">
+                <div>
+                  <label
+                    htmlFor="handover-when"
+                    className="block text-xs font-medium text-stone-600"
+                  >
+                    Handover
+                  </label>
+                  <input
+                    id="handover-when"
+                    type="datetime-local"
+                    value={when}
+                    onChange={(e) => setWhen(e.target.value)}
+                    className="mt-1 rounded-lg border border-stone-300 px-2 py-1 text-sm"
+                  />
+                </div>
+                <div className="min-w-[160px] flex-1">
+                  <label
+                    htmlFor="handover-note"
+                    className="block text-xs font-medium text-stone-600"
+                  >
+                    Who and where (optional)
+                  </label>
+                  <input
+                    id="handover-note"
+                    value={note}
+                    onChange={(e) => setNote(e.target.value)}
+                    placeholder="Ray collects, dock 4"
+                    className="mt-1 w-full rounded-lg border border-stone-300 px-2 py-1 text-sm"
+                  />
+                </div>
+                <button
+                  onClick={book}
+                  disabled={busy}
+                  className="rounded-lg border border-emerald-700 px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+                >
+                  {bookedFor ? "Update booking" : "🚚 Book pickup"}
+                </button>
+                {bookedFor && (
+                  <button
+                    onClick={unbook}
+                    disabled={busy}
+                    className="rounded px-2 py-1.5 text-xs text-stone-400 hover:text-red-600 disabled:opacity-50"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="mt-2 border-t border-stone-100 pt-2">
             <button

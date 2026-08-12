@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { isAuthed } from "@/lib/auth";
 import { distanceMiles } from "@/lib/geo";
+import { requestStage } from "@/lib/requests";
 
 async function currentBankId() {
   return (await cookies()).get("bankId")?.value ?? null;
@@ -21,7 +22,17 @@ export async function GET() {
     where: { status: "OPEN" },
     include: {
       foodBank: true,
-      requests: { select: { id: true, requesterBankId: true, status: true } },
+      requests: {
+        select: {
+          id: true,
+          requesterBankId: true,
+          status: true,
+          agreedQuantity: true,
+          finalQuantity: true,
+          scheduledFor: true,
+          handoverNote: true,
+        },
+      },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -34,7 +45,9 @@ export async function GET() {
       latitude: me.latitude,
       longitude: me.longitude,
     },
-    flags: flags.map((f) => ({
+    flags: flags.map((f) => {
+      const mine = f.requests.find((r) => r.requesterBankId === bankId) ?? null;
+      return {
       id: f.id,
       type: f.type,
       itemName: f.itemName,
@@ -59,9 +72,24 @@ export async function GET() {
         ).toFixed(1),
       ),
       requestCount: f.requests.length,
-      myRequestId:
-        f.requests.find((r) => r.requesterBankId === bankId)?.id ?? null,
-    })),
+      /** Live responses only — cancelled ones shouldn't inflate the count. */
+      activeRequestCount: f.requests.filter((r) => r.status !== "CANCELLED").length,
+      myRequestId: mine?.id ?? null,
+      // Everything the board card needs to show where my own response stands,
+      // so a dispatcher can read the state of play without opening the thread.
+      myRequest: mine
+        ? {
+            id: mine.id,
+            status: mine.status,
+            stage: requestStage(mine),
+            agreedQuantity: mine.agreedQuantity,
+            finalQuantity: mine.finalQuantity,
+            scheduledFor: mine.scheduledFor?.toISOString() ?? null,
+            handoverNote: mine.handoverNote,
+          }
+        : null,
+      };
+    }),
   });
 }
 
